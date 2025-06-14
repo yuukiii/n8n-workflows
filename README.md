@@ -40,6 +40,10 @@ To import a workflow into your own n8n instance:
 
 Make sure to review and modify credentials or webhook URLs as needed before running.
 
+To import all workflows at once run following:
+
+`./import-workflows.sh`
+
 ---
 
 ## 🤝 Contribution
