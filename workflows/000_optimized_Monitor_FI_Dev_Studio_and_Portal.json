@@ -1,0 +1,299 @@
+{
+  "name": "URL Health Monitor - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 15,
+              "unit": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "40422e84-f82d-4cf0-9d83-faf70bd66341",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [100, 200]
+    },
+    {
+      "parameters": {},
+      "id": "1d253f26-e55f-4a69-823b-f620d9c01845",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "path": "check-urls",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "13e3bdf0-aa64-4745-a959-9470e26a74a8",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Define URLs to monitor - can be overridden by webhook parameters\nlet urlsToMonitor = [];\nconst inputData = $input.first()?.json || {};\n\n// Get URLs from webhook or use defaults\nconst providedUrls = inputData.urls || [];\n\n// Default URLs if none provided\nconst defaultUrls = [\n  {\n    name: 'Fiserv Developer Portal',\n    url: 'https://developer.fiserv.com',\n    timeout: 10000,\n    expectedStatus: 200,\n    critical: true\n  },\n  {\n    name: 'First Data API Portal',\n    url: 'https://fiapi.firstdata.com/portal/NA/apibrowser',\n    timeout: 10000,\n    expectedStatus: 200,\n    critical: true\n  }\n];\n\n// Use provided URLs or defaults\nif (providedUrls.length > 0) {\n  providedUrls.forEach(url => {\n    if (typeof url === 'string') {\n      urlsToMonitor.push({\n        name: extractDomainName(url),\n        url: url,\n        timeout: 10000,\n        expectedStatus: 200,\n        critical: false\n      });\n    } else if (url.url) {\n      urlsToMonitor.push({\n        name: url.name || extractDomainName(url.url),\n        url: url.url,\n        timeout: url.timeout || 10000,\n        expectedStatus: url.expectedStatus || 200,\n        critical: url.critical || false\n      });\n    }\n  });\n} else {\n  urlsToMonitor = defaultUrls;\n}\n\n// Helper function\nfunction extractDomainName(url) {\n  try {\n    const domain = new URL(url).hostname;\n    return domain.replace('www.', '');\n  } catch {\n    return url;\n  }\n}\n\n// Add metadata\nconst checkId = inputData.checkId || `check_${Date.now()}`;\nconst notifyOnSuccess = inputData.notifyOnSuccess || false;\n\n// Return each URL as separate item for parallel processing\nreturn urlsToMonitor.map((urlConfig, index) => ({\n  json: {\n    ...urlConfig,\n    checkTime: new Date().toISOString(),\n    checkId: checkId,\n    notifyOnSuccess: notifyOnSuccess,\n    _startedAt: Date.now(),\n    index: index\n  }\n}));"
+      },
+      "id": "bda0e0c7-8295-437f-8c9e-08746fb953cb",
+      "name": "Process URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": true
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": "={{ $json.timeout }}"
+        }
+      },
+      "id": "289761e9-1a6a-4e4a-9080-03a532f4c279",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process HTTP results and compute status\nreturn items.map(item => {\n  const now = Date.now();\n  const started = item.json._startedAt || now;\n  const latency = now - started;\n  const err = item.json.error;\n  const url = item.json.url;\n  const name = item.json.name;\n  const critical = item.json.critical;\n  const statusCode = err ? (err.cause?.response?.status || err.statusCode || 0) : (item.json.statusCode || 0);\n  const expected = Number(item.json.expectedStatus || 200);\n  const ok = (!err && statusCode === expected) || (!err && expected === 0 && statusCode >= 200 && statusCode < 400);\n  \n  return { \n    json: { \n      name: name,\n      url: url, \n      statusCode: statusCode, \n      latency_ms: latency, \n      ok: ok, \n      critical: critical,\n      error: err ? (err.message || 'Request failed') : '',\n      checkTime: item.json.checkTime,\n      checkId: item.json.checkId,\n      notifyOnSuccess: item.json.notifyOnSuccess\n    } \n  };\n});"
+      },
+      "id": "77403304-fc50-40d7-baf7-d1f3002d839b",
+      "name": "Compute Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all results and determine what to notify\nconst allResults = $input.all();\nconst downSites = allResults.filter(item => !item.json.ok);\nconst upSites = allResults.filter(item => item.json.ok);\nconst criticalDown = downSites.filter(item => item.json.critical);\n\n// Create summary\nconst summary = {\n  totalChecked: allResults.length,\n  upCount: upSites.length,\n  downCount: downSites.length,\n  criticalDownCount: criticalDown.length,\n  checkTime: new Date().toISOString(),\n  checkId: allResults[0]?.json.checkId || 'unknown',\n  overallHealth: downSites.length === 0 ? 'healthy' : (criticalDown.length > 0 ? 'critical' : 'warning')\n};\n\n// Create notification items\nconst notifications = [];\n\n// Add down sites for notification\ndownSites.forEach(site => {\n  notifications.push({\n    json: {\n      ...site.json,\n      alertType: 'down',\n      summary: summary\n    }\n  });\n});\n\n// Add success notification if requested and all sites are up\nif (allResults[0]?.json.notifyOnSuccess && downSites.length === 0) {\n  notifications.push({\n    json: {\n      alertType: 'success',\n      summary: summary,\n      message: `All ${summary.totalChecked} monitored URLs are healthy`\n    }\n  });\n}\n\n// Always return summary for webhook response\nconst responseData = {\n  json: {\n    summary: summary,\n    results: allResults.map(item => item.json),\n    downSites: downSites.map(item => item.json),\n    upSites: upSites.map(item => item.json),\n    notifications: notifications.length\n  }\n};\n\n// Return notifications for alerts (if any) and response data\nreturn [...notifications, responseData];"
+      },
+      "id": "ae5457d4-a800-4075-96ce-da396e90f66c",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.alertType }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "c55d814c-de2e-4369-a8ed-8c3377bdc6a5",
+      "name": "Filter Alerts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1100, 250]
+    },
+    {
+      "parameters": {
+        "channel": "# web-status",
+        "text": "={{ $json.alertType === 'down' ? `:rotating_light: *URL DOWN*\\n*Name:* ${$json.name}\\n*URL:* ${$json.url}\\n*Status:* ${$json.statusCode}\\n*Latency:* ${$json.latency_ms} ms\\n*Critical:* ${$json.critical ? 'YES 🚨' : 'No'}\\n*When:* ${new Date().toISOString()}\\n*Error:* ${$json.error || 'N/A'}` : `:white_check_mark: *ALL URLS UP*\\n*Summary:* ${$json.message}\\n*Check Time:* ${new Date().toISOString()}` }}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "f8bd34f0-df73-4ae9-8bb2-474a7166eeaf",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1300, 200],
+      "credentials": {
+        "slackApi": {
+          "id": "mRosHgkSiIvFCePX",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "alerts@yourcompany.com",
+        "toEmail": "ops@yourcompany.com",
+        "subject": "={{ $json.alertType === 'down' ? `URL DOWN: ${$json.name}` : 'All URLs Healthy' }}",
+        "text": "={{ $json.alertType === 'down' ? `URL: ${$json.url}\\nStatus: ${$json.statusCode}\\nLatency: ${$json.latency_ms} ms\\nCritical: ${$json.critical ? 'YES' : 'No'}\\nWhen: ${new Date().toISOString()}\\nError: ${$json.error || 'N/A'}` : `All monitored URLs are healthy.\\nCheck Time: ${new Date().toISOString()}\\nTotal URLs: ${$json.summary?.totalChecked || 0}` }}",
+        "options": {}
+      },
+      "id": "c7563d82-2462-49c7-b0fe-3826eefe262e",
+      "name": "Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1300, 300],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.summary }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "3c641781-6b30-45a4-8dc2-f3feab38b88a",
+      "name": "Filter Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}"
+      },
+      "id": "c7fccda5-036e-4db8-867c-4d8bbf4af1a5",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1300, 400]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process URLs": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Compute Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Filter Alerts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Filter Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Alerts": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9558735e-18bf-4b5d-b5f3-01afd3a3908f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "49f88ef3b78bc16aab0abd32fa271f01e654b7e120b789f0495fe3bd9c2b7731"
+  },
+  "id": "0QiKVU8SXVUQu6lr",
+  "tags": []
+}

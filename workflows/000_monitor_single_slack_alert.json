@@ -1,0 +1,117 @@
+{
+  "name": "Simple Uptime Monitor (Slack + Email only)",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [{ "mode": "everyX", "unit": "minutes", "value": 5 }]
+        }
+      },
+      "id": "ScheduleTrigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [-680, -40]
+    },
+    {
+      "parameters": {
+        "fields": {
+          "string": [{ "name": "url", "value": "https://developer.fiserv.com" }],
+          "number": [{ "name": "expected_status", "value": 200 }]
+        }
+      },
+      "id": "SetURL",
+      "name": "Set Target URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [-440, -40]
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of items) { item.json._startedAt = Date.now(); } return items;"
+      },
+      "id": "StampStart",
+      "name": "Stamp Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, -40]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": { "fullResponse": true, "timeout": 10000 }
+      },
+      "id": "HttpCheck",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "continueOnFail": true,
+      "position": [-20, -40]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const now = Date.now();\n  const started = item.json._startedAt || now;\n  const latency = now - started;\n  const err = item.json.error;\n  const statusCode = err ? (err.cause?.response?.status || err.statusCode || 0) : (item.json.statusCode || 0);\n  const expected = Number(item.json.expected_status || 200);\n  const ok = (!err && statusCode === expected) || (!err && expected === 0 && statusCode >= 200 && statusCode < 400);\n  return { json: { url: item.json.url, statusCode, latency_ms: latency, ok, error: err ? (err.message || 'Request failed') : '' } };\n});"
+      },
+      "id": "Compute",
+      "name": "Compute Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, -40]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $json.ok ? 1 : 0 }}", "operation": "equal", "value2": 1 }]
+        }
+      },
+      "id": "IfOK",
+      "name": "OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [420, -40]
+    },
+    {
+      "parameters": {
+        "channel": "#website-alerts",
+        "text": "={{ `:rotating_light: *URL DOWN*\\n*URL:* ${$json.url}\\n*Status:* ${$json.statusCode}\\n*Latency:* ${$json.latency_ms} ms\\n*When:* ${new Date().toISOString()}\\n*Error:* ${$json.error || 'N/A'}` }}"
+      },
+      "id": "SlackAlert",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "credentials": { "slackApi": { "id": "REPLACE_WITH_YOUR_SLACK_CREDS_ID", "name": "Slack API" } },
+      "position": [660, 40]
+    },
+    {
+      "parameters": {
+        "fromEmail": "alerts@example.com",
+        "toEmail": "ops@example.com",
+        "subject": "URL DOWN: ={{ $json.url }}",
+        "text": "={{ `URL: ${$json.url}\\nStatus: ${$json.statusCode}\\nLatency: ${$json.latency_ms} ms\\nWhen: ${new Date().toISOString()}\\nError: ${$json.error || 'N/A'}` }}"
+      },
+      "id": "EmailAlert",
+      "name": "Email Alert (optional)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "disabled": false,
+      "credentials": { "smtp": { "id": "REPLACE_WITH_YOUR_SMTP_CREDS_ID", "name": "SMTP" } },
+      "position": [660, 220]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Set Target URL", "type": "main", "index": 0 }]] },
+    "Set Target URL": { "main": [[{ "node": "Stamp Start", "type": "main", "index": 0 }]] },
+    "Stamp Start": { "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]] },
+    "HTTP Request": { "main": [[{ "node": "Compute Result", "type": "main", "index": 0 }]] },
+    "Compute Result": { "main": [[{ "node": "OK?", "type": "main", "index": 0 }]] },
+    "OK?": {
+      "main": [
+        [],
+        [
+          { "node": "Slack Alert", "type": "main", "index": 0 },
+          { "node": "Email Alert (optional)", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  }
+}

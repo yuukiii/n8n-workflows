@@ -1,0 +1,522 @@
+{
+  "name": "Monitor FI Dev Studio and Portal",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 15,
+              "unit": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "40422e84-f82d-4cf0-9d83-faf70bd66341",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "url",
+              "value": "https://developer.fiserv.com"
+            }
+          ],
+          "number": [
+            {
+              "name": "expected_status",
+              "value": 200
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1d253f26-e55f-4a69-823b-f620d9c01845",
+      "name": "Set Target URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of items) { item.json._startedAt = Date.now(); } return items;"
+      },
+      "id": "13e3bdf0-aa64-4745-a959-9470e26a74a8",
+      "name": "Stamp Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": true
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "bda0e0c7-8295-437f-8c9e-08746fb953cb",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        16,
+        112
+      ],
+      "notesInFlow": false,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const now = Date.now();\n  const started = item.json._startedAt || now;\n  const latency = now - started;\n  const err = item.json.error;\n  const url = item.json.url;\n  const statusCode = err ? (err.cause?.response?.status || err.statusCode || 0) : (item.json.statusCode || 0);\n  const expected = Number(item.json.expected_status || 200);\n  const ok = (!err && statusCode === expected) || (!err && expected === 0 && statusCode >= 200 && statusCode < 400);\n  return { json: { url: url, statusCode, latency_ms: latency, ok, error: err ? (err.message || 'Request failed') : '' } };\n});"
+      },
+      "id": "289761e9-1a6a-4e4a-9080-03a532f4c279",
+      "name": "Compute Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.ok ? 1 : 0 }}",
+              "operation": "equal",
+              "value2": 1
+            }
+          ]
+        }
+      },
+      "id": "77403304-fc50-40d7-baf7-d1f3002d839b",
+      "name": "OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        464,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "# web-status",
+        "text": "={{ `:rotating_light: *URL DOWN*\\n*URL:* 'https://developer.fiserv.com'\\n*Status:* ${$json.statusCode}\\n*Latency:* ${$json.latency_ms} ms\\n*When:* ${new Date().toISOString()}\\n*Error:* ${$json.error || 'N/A'}` }}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "ae5457d4-a800-4075-96ce-da396e90f66c",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        688,
+        112
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "mRosHgkSiIvFCePX",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "alerts@gmail.com",
+        "toEmail": "ops@example.com",
+        "subject": "URL DOWN: ={{ $json.url }}",
+        "text": "={{ `URL: ${$json.url}\\nStatus: ${$json.statusCode}\\nLatency: ${$json.latency_ms} ms\\nWhen: ${new Date().toISOString()}\\nError: ${$json.error || 'N/A'}` }}",
+        "options": {}
+      },
+      "id": "c55d814c-de2e-4369-a8ed-8c3377bdc6a5",
+      "name": "Email Alert (optional)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        688,
+        304
+      ],
+      "webhookId": "778c2678-5db7-4c24-8ed4-11869d0808ff",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "url",
+              "value": "https://fiapi.firstdata.com/portal/NA/apibrowser"
+            }
+          ],
+          "number": [
+            {
+              "name": "expected_status",
+              "value": 200
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f8bd34f0-df73-4ae9-8bb2-474a7166eeaf",
+      "name": "Set Target URL1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        624
+      ],
+      "id": "c7563d82-2462-49c7-b0fe-3826eefe262e",
+      "name": "Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "channel": "# web-status",
+        "text": "={{ `:up: *URL UP*\\n*URL:* 'https://developer.fiserv.com'\\n*Status:* ${$json.statusCode}\\n*Latency:* ${$json.latency_ms} ms\\n*When:* ${new Date().toISOString()}\\n*Error:* ${$json.error || 'N/A'}` }}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "3c641781-6b30-45a4-8dc2-f3feab38b88a",
+      "name": "Slack Alert1",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        688,
+        -80
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "mRosHgkSiIvFCePX",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of items) { item.json._startedAt = Date.now(); } return items;"
+      },
+      "id": "c7fccda5-036e-4db8-867c-4d8bbf4af1a5",
+      "name": "Stamp Start1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": true
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "08ee237a-6946-4c4f-8135-82c63568f486",
+      "name": "HTTP Request1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        16,
+        624
+      ],
+      "notesInFlow": false,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const now = Date.now();\n  const started = item.json._startedAt || now;\n  const latency = now - started;\n  const err = item.json.error;\n  const url = item.json.url;\n  const statusCode = err ? (err.cause?.response?.status || err.statusCode || 0) : (item.json.statusCode || 0);\n  const expected = Number(item.json.expected_status || 200);\n  const ok = (!err && statusCode === expected) || (!err && expected === 0 && statusCode >= 200 && statusCode < 400);\n  return { json: { url: url, statusCode, latency_ms: latency, ok, error: err ? (err.message || 'Request failed') : '' } };\n});"
+      },
+      "id": "5d4b48cf-ca9c-4344-adeb-35b35e31bd3b",
+      "name": "Compute Result1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.ok ? 1 : 0 }}",
+              "operation": "equal",
+              "value2": 1
+            }
+          ]
+        }
+      },
+      "id": "ab2caf05-5eb6-46b2-ba40-4f302f225747",
+      "name": "OK?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        464,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "# web-status",
+        "text": "={{ `:up: *URL UP*\\n*URL:* 'https://fiapi.firstdata.com/portal/NA/apibrowser'\\n*Status:* ${$json.statusCode}\\n*Latency:* ${$json.latency_ms} ms\\n*When:* ${new Date().toISOString()}\\n*Error:* ${$json.error || 'N/A'}` }}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "cbbcc346-96c8-4f94-92ef-dd71a79bc8e8",
+      "name": "Slack Alert2",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        688,
+        528
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "mRosHgkSiIvFCePX",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "# web-status",
+        "text": "={{ `:rotating_light: *URL DOWN*\\n*URL:* 'https://fiapi.firstdata.com/portal/NA/apibrowser'\\n*Status:* ${$json.statusCode}\\n*Latency:* ${$json.latency_ms} ms\\n*When:* ${new Date().toISOString()}\\n*Error:* ${$json.error || 'N/A'}` }}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "8b0ee924-1c2f-4dda-bb3c-0ebd09cb76da",
+      "name": "Slack Alert3",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        688,
+        720
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "mRosHgkSiIvFCePX",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Target URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Target URL": {
+      "main": [
+        [
+          {
+            "node": "Stamp Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stamp Start": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Compute Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Result": {
+      "main": [
+        [
+          {
+            "node": "OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK?": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Alert (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Target URL1": {
+      "main": [
+        [
+          {
+            "node": "Stamp Start1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Set Target URL1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stamp Start1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Compute Result1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Result1": {
+      "main": [
+        [
+          {
+            "node": "OK?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK?1": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack Alert3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9558735e-18bf-4b5d-b5f3-01afd3a3908f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "49f88ef3b78bc16aab0abd32fa271f01e654b7e120b789f0495fe3bd9c2b7731"
+  },
+  "id": "0QiKVU8SXVUQu6lr",
+  "tags": []
+}
